@@ -5,6 +5,8 @@ import easyocr
 import cv2
 import numpy as np
 from datetime import datetime
+import io
+from PIL import Image
 
 conn = sqlite3.connect('proseka_records.db', check_same_thread=False)
 cursor = conn.cursor()
@@ -52,45 +54,57 @@ tab_upload, tab_view = st.tabs(["기록 업로드", "결과 조회"])
 with tab_upload:
     st.write("게임 결과 캡처 사진 업로드")
     uploaded_file = st.file_uploader("이미지 파일을 선택할 것", type=['png', 'jpg', 'jpeg'])
+    
     if uploaded_file is not None:
-        file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
-        image = cv2.imdecode(file_bytes, 1)
-        image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image_bytes = uploaded_file.read()
         st.write("업로드한 게임 결과 사진 확인")
-        st.image(image_rgb, use_container_width=True)
-        extracted_data = extract_data_from_image(image)
-        st.write("추출된 데이터 확인 및 수정 (오류가 있다면 직접 수정할 것)")
-        with st.form("verification_form"):
-            col1, col2 = st.columns(2)
-            with col1:
-                edit_play_date = st.text_input("플레이 날짜", value=extracted_data[0])
-                edit_level = st.text_input("레벨", value=extracted_data[1])
-                edit_song_title = st.text_input("악곡 이름", value=extracted_data[2])
-                edit_fast = st.number_input("Fast", value=extracted_data[8], min_value=0)
-                edit_late = st.number_input("Late", value=extracted_data[9], min_value=0)
-            with col2:
-                edit_perfect = st.number_input("Perfect", value=extracted_data[3], min_value=0)
-                edit_great = st.number_input("Great", value=extracted_data[4], min_value=0)
-                edit_good = st.number_input("Good", value=extracted_data[5], min_value=0)
-                edit_bad = st.number_input("Bad", value=extracted_data[6], min_value=0)
-                edit_miss = st.number_input("Miss", value=extracted_data[7], min_value=0)
-            submitted = st.form_submit_button("확인 완료 및 저장하기")
-            if submitted:
-                cursor.execute('''
-                    SELECT COUNT(*) FROM records 
-                    WHERE play_date = ? AND song_title = ? 
-                    AND perfect = ? AND great = ? AND good = ? AND bad = ? AND miss = ?
-                ''', (edit_play_date, edit_song_title, edit_perfect, edit_great, edit_good, edit_bad, edit_miss))
-                is_duplicate = cursor.fetchone()[0] > 0
-                if is_duplicate:
-                    st.write("안내: 이미 동일한 판정 수치와 날짜, 악곡 이름을 가진 중복 데이터가 존재하여 저장하지 않음.")
-                else:
+        st.image(image_bytes, use_container_width=True)
+        
+        try:
+            pil_image = Image.open(io.BytesIO(image_bytes)).convert('RGB')
+            image_array = np.array(pil_image)
+            image_bgr = cv2.cvtColor(image_array, cv2.COLOR_RGB2BGR)
+            
+            with st.spinner('이미지에서 데이터를 추출하는 중임. 잠시만 기다려 줄 것.'):
+                extracted_data = extract_data_from_image(image_bgr)
+            
+            st.write("추출된 데이터 확인 및 수정 (오류가 있다면 직접 수정할 것)")
+            with st.form("verification_form"):
+                col1, col2 = st.columns(2)
+                with col1:
+                    edit_play_date = st.text_input("플레이 날짜", value=extracted_data[0])
+                    edit_level = st.text_input("레벨", value=extracted_data[1])
+                    edit_song_title = st.text_input("악곡 이름", value=extracted_data[2])
+                    edit_fast = st.number_input("Fast", value=extracted_data[8], min_value=0)
+                    edit_late = st.number_input("Late", value=extracted_data[9], min_value=0)
+                with col2:
+                    edit_perfect = st.number_input("Perfect", value=extracted_data[3], min_value=0)
+                    edit_great = st.number_input("Great", value=extracted_data[4], min_value=0)
+                    edit_good = st.number_input("Good", value=extracted_data[5], min_value=0)
+                    edit_bad = st.number_input("Bad", value=extracted_data[6], min_value=0)
+                    edit_miss = st.number_input("Miss", value=extracted_data[7], min_value=0)
+                
+                submitted = st.form_submit_button("확인 완료 및 저장하기")
+                
+                if submitted:
                     cursor.execute('''
-                        INSERT INTO records (play_date, level, song_title, perfect, great, good, bad, miss, fast, late)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    ''', (edit_play_date, edit_level, edit_song_title, edit_perfect, edit_great, edit_good, edit_bad, edit_miss, edit_fast, edit_late))
-                    conn.commit()
-                    st.write("데이터베이스에 추출 결과를 성공적으로 저장함.")
+                        SELECT COUNT(*) FROM records 
+                        WHERE play_date = ? AND song_title = ? 
+                        AND perfect = ? AND great = ? AND good = ? AND bad = ? AND miss = ?
+                    ''', (edit_play_date, edit_song_title, edit_perfect, edit_great, edit_good, edit_bad, edit_miss))
+                    is_duplicate = cursor.fetchone()[0] > 0
+                    if is_duplicate:
+                        st.write("안내: 이미 동일한 판정 수치와 날짜, 악곡 이름을 가진 중복 데이터가 존재하여 저장하지 않음.")
+                    else:
+                        cursor.execute('''
+                            INSERT INTO records (play_date, level, song_title, perfect, great, good, bad, miss, fast, late)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        ''', (edit_play_date, edit_level, edit_song_title, edit_perfect, edit_great, edit_good, edit_bad, edit_miss, edit_fast, edit_late))
+                        conn.commit()
+                        st.write("데이터베이스에 추출 결과를 성공적으로 저장함.")
+        except Exception as e:
+            st.write("이미지를 분석하는 도중 오류가 발생했음. 파일 형식이 올바른지 다시 확인해 줄 것.")
+            st.write(e)
 
 with tab_view:
     st.write("저장된 결과 조회")
